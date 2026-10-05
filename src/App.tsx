@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { VideoUploader } from "@/components/VideoUploader";
-import type { Clip, MergeResult, OutputSettings, ProcessingState } from "@/types";
+import type { Clip, ClipMetadata, MergeResult, OutputSettings, ProcessingState } from "@/types";
 import { validateVideoFile } from "@/utils/fileValidation";
 import { extractVideoMetadata } from "@/utils/media";
 import { formatBytes, formatDuration } from "@/utils/format";
@@ -37,6 +37,7 @@ export default function App() {
   const [clips, setClips] = useState<Clip[]>([]);
   const [isImporting, setIsImporting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [importNotice, setImportNotice] = useState<string | null>(null);
   const [previewClipId, setPreviewClipId] = useState<string | null>(null);
   const [trimClipId, setTrimClipId] = useState<string | null>(null);
   const [isSequencePreviewOpen, setIsSequencePreviewOpen] = useState(false);
@@ -51,6 +52,8 @@ export default function App() {
   const [result, setResult] = useState<MergeResult | null>(null);
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [showHowItWorks, setShowHowItWorks] = useState(false);
+  const [settingsStatus, setSettingsStatus] = useState<"saved" | "restored" | "idle">("idle");
+  const [isHydratingSettings, setIsHydratingSettings] = useState(true);
 
   const previewClip = clips.find((clip) => clip.id === previewClipId) ?? null;
   const trimClip = clips.find((clip) => clip.id === trimClipId) ?? null;
@@ -64,14 +67,27 @@ export default function App() {
 
   useEffect(() => {
     const saved = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (!saved) return;
+    if (!saved) {
+      setIsHydratingSettings(false);
+      return;
+    }
+
     try {
-      const parsed = JSON.parse(saved) as OutputSettings;
+      const parsed = JSON.parse(saved) as Partial<OutputSettings>;
       setSettings((current) => ({ ...current, ...parsed }));
+      setSettingsStatus("restored");
     } catch {
-      // Ignore malformed local config.
+      setSettingsStatus("idle");
+    } finally {
+      setIsHydratingSettings(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (isHydratingSettings) return;
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    setSettingsStatus("saved");
+  }, [settings, isHydratingSettings]);
 
   useEffect(() => {
     const prevent = (event: DragEvent) => {
@@ -109,9 +125,14 @@ export default function App() {
 
     setIsImporting(true);
     setErrorMessage(null);
+    setImportNotice(null);
 
+    const existingKeys = new Set(
+      clipsRef.current.map((clip) => `${clip.name}:${clip.size}:${clip.file.lastModified}`)
+    );
     const accepted: Clip[] = [];
     const errors: string[] = [];
+    const notices: string[] = [];
 
     for (const file of files) {
       const validation = validateVideoFile(file);
@@ -120,10 +141,25 @@ export default function App() {
         continue;
       }
 
+      const fileKey = `${file.name}:${file.size}:${Math.max(file.lastModified, 0)}`;
+      if (existingKeys.has(fileKey)) {
+        errors.push(`${file.name} is already in your project.`);
+        continue;
+      }
+
       const sourceUrl = URL.createObjectURL(file);
 
       try {
-        const metadata = await extractVideoMetadata(sourceUrl);
+        let metadata: ClipMetadata;
+        let metadataAvailable = true;
+        try {
+          metadata = await extractVideoMetadata(sourceUrl);
+        } catch {
+          metadata = { duration: 0, width: 0, height: 0, thumbnailUrl: null };
+          metadataAvailable = false;
+          notices.push(`${file.name} was added. Its details will be checked when you export.`);
+        }
+
         const clip: Clip = {
           id: createClipId(),
           file,
@@ -132,27 +168,32 @@ export default function App() {
           size: file.size,
           mimeType: file.type,
           metadata,
+          metadataAvailable,
           trimStart: 0,
           trimEnd: metadata.duration || 0,
           muted: false,
           transitionToNext: "none",
         };
         accepted.push(clip);
-      } catch {
+        existingKeys.add(fileKey);
+      } catch (error) {
         URL.revokeObjectURL(sourceUrl);
-        errors.push(`${file.name} could not be read. Try converting it to MP4 or WebM.`);
+        const detail = error instanceof Error ? ` ${error.message}` : "";
+        errors.push(
+          `${file.name} could not be read.${detail} Check that the file is a valid video and try an H.264/AAC MP4 if the issue continues.`
+        );
       }
     }
 
     if (accepted.length) {
       setClips((current) => [...current, ...accepted]);
-      if (!processing.active) {
-        void serviceRef.current.ensureLoaded();
-      }
     }
 
     if (errors.length) {
       setErrorMessage(errors.join(" "));
+    }
+    if (notices.length) {
+      setImportNotice(notices.join(" "));
     }
 
     setIsImporting(false);
@@ -246,6 +287,19 @@ export default function App() {
         {
           onStage: (stage) => setProcessing((current) => ({ ...current, stage })),
           onProgress: (progress) => setProcessing((current) => ({ ...current, progress })),
+          onClipMetadata: (clipId, metadata) =>
+            setClips((current) =>
+              current.map((clip) =>
+                clip.id === clipId
+                  ? {
+                      ...clip,
+                      metadata,
+                      metadataAvailable: true,
+                      trimEnd: clip.trimEnd > 0 ? clip.trimEnd : metadata.duration,
+                    }
+                  : clip
+              )
+            ),
         },
         controller.signal
       );
@@ -277,6 +331,7 @@ export default function App() {
 
   const saveProjectSettings = () => {
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    setSettingsStatus("saved");
   };
 
   return (
@@ -292,10 +347,15 @@ export default function App() {
             {errorMessage}
           </div>
         )}
+        {importNotice && (
+          <div className="mb-5 rounded-lg border border-cyan-400/30 bg-cyan-500/10 p-3 text-sm text-cyan-100" role="status">
+            {importNotice}
+          </div>
+        )}
 
         {clips.length === 0 ? (
           <div className="animate-[fadeIn_220ms_ease-out] space-y-6">
-              <VideoUploader onFilesSelected={addFiles} />
+              <VideoUploader onFilesSelected={addFiles} isImporting={isImporting} />
               <p className="text-center text-xs text-slate-400">
                 Add as many clips as your device can reasonably handle and combine them into one seamless movie directly
                 from your browser.
@@ -306,11 +366,20 @@ export default function App() {
               <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-slate-900/35 p-4">
                 <div className="text-sm text-slate-200">
                   <p>
-                    {clips.length} clips | {formatDuration(totalTrimmedDuration)} total | {formatBytes(totalSourceSize)}
+                    {clips.length} clips |{" "}
+                    {clips.some((clip) => !clip.metadataAvailable)
+                      ? "duration pending"
+                      : `${formatDuration(totalTrimmedDuration)} total`}{" "}
+                    | {formatBytes(totalSourceSize)}
                   </p>
                   {isLargeProject && (
                     <p className="mt-1 text-xs text-amber-300">
                       Large project detected. Browser processing may need significant RAM and time.
+                    </p>
+                  )}
+                  {settingsStatus !== "idle" && (
+                    <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-cyan-300/80">
+                      {settingsStatus === "saved" ? "settings saved" : "settings restored"}
                     </p>
                   )}
                 </div>
@@ -365,6 +434,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setIsSequencePreviewOpen(true)}
+                  disabled={clips.some((clip) => !clip.metadataAvailable)}
                   className="rounded-lg border border-white/20 px-4 py-2 text-sm"
                 >
                   Preview Movie

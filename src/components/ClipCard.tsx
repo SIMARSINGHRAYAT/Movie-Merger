@@ -65,18 +65,32 @@ export const ClipCard = ({
         {clip.name}
       </h3>
       <p className="mt-1 text-xs text-slate-400">
-        {formatDuration(clip.metadata.duration)} | {formatBytes(clip.size)} | {clip.metadata.width || "?"} x{" "}
-        {clip.metadata.height || "?"}
+        {clip.metadataAvailable ? formatDuration(clip.metadata.duration) : "Details pending export"} |{" "}
+        {formatBytes(clip.size)} | {clip.metadata.width || "?"} x {clip.metadata.height || "?"}
       </p>
-      <p className="mt-1 text-xs text-slate-400">
-        Trimmed: {formatDuration(trimmedDuration)} ({clip.trimStart.toFixed(1)}s to {clip.trimEnd.toFixed(1)}s)
-      </p>
+      {clip.metadataAvailable && (
+        <p className="mt-1 text-xs text-slate-400">
+          Trimmed: {formatDuration(trimmedDuration)} ({clip.trimStart.toFixed(1)}s to {clip.trimEnd.toFixed(1)}s)
+        </p>
+      )}
 
       <div className="mt-3 grid grid-cols-3 gap-2">
-        <button type="button" title="Preview clip" className={iconButtonClass} onClick={() => onPreview(clip.id)}>
+        <button
+          type="button"
+          title={clip.metadataAvailable ? "Preview clip" : "Preview is available after metadata is read"}
+          className={iconButtonClass}
+          onClick={() => onPreview(clip.id)}
+          disabled={!clip.metadataAvailable}
+        >
           Preview
         </button>
-        <button type="button" title="Trim clip" className={iconButtonClass} onClick={() => onTrim(clip.id)}>
+        <button
+          type="button"
+          title={clip.metadataAvailable ? "Trim clip" : "Trimming is available after metadata is read"}
+          className={iconButtonClass}
+          onClick={() => onTrim(clip.id)}
+          disabled={!clip.metadataAvailable}
+        >
           Trim
         </button>
         <button

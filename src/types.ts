@@ -23,6 +23,7 @@ export interface Clip {
   size: number;
   mimeType: string;
   metadata: ClipMetadata;
+  metadataAvailable: boolean;
   trimStart: number;
   trimEnd: number;
   muted: boolean;

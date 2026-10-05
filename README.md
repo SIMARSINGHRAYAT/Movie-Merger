@@ -32,8 +32,18 @@ npm run dev
 npm run build
 ```
 
+## Deploy to Vercel
+
+1. Import this GitHub repository in Vercel.
+2. Keep the framework preset set to **Vite**.
+3. Use `npm run build` as the build command and `dist` as the output directory.
+4. Deploy. No environment variables are required.
+
+The repository includes `vercel.json` with the production build settings and baseline security headers. Video export runs in the browser and downloads the FFmpeg WebAssembly core from a CDN at runtime, so users need access to unpkg or jsDelivr to export.
+
 ## Notes
 
-- FFmpeg core files are loaded from unpkg at runtime.
+- Videos that the browser cannot inspect are still added to the timeline; their metadata is read by FFmpeg when export starts.
+- FFmpeg core files are loaded from unpkg with jsDelivr as a fallback, so exporting requires a connection to at least one CDN.
 - Large projects require substantial CPU and memory due to in-browser transcoding.
 - Files are processed locally in-browser whenever possible.

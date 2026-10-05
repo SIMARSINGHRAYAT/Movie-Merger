@@ -9,18 +9,30 @@ const loadVideoElement = (url: string): Promise<HTMLVideoElement> =>
     video.playsInline = true;
 
     const cleanup = () => {
+      window.clearTimeout(timeout);
       video.onloadedmetadata = null;
       video.onerror = null;
     };
 
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      video.removeAttribute("src");
+      video.load();
+      reject(new Error("Timed out while reading video metadata."));
+    }, 20_000);
+
     video.onloadedmetadata = () => {
       cleanup();
+      if (!Number.isFinite(video.duration) || video.duration <= 0 || !video.videoWidth || !video.videoHeight) {
+        reject(new Error("Video metadata is missing or unsupported."));
+        return;
+      }
       resolve(video);
     };
 
     video.onerror = () => {
       cleanup();
-      reject(new Error("Unable to read this video file."));
+      reject(new Error("This browser cannot read the video codec or container."));
     };
   });
 
@@ -41,7 +53,12 @@ const captureThumbnail = async (video: HTMLVideoElement): Promise<string | null>
   const seekTime = Math.min(Math.max(video.duration * 0.2, 0.15), Math.max(video.duration - 0.1, 0));
 
   await new Promise<void>((resolve) => {
+    const timeout = window.setTimeout(() => {
+      video.removeEventListener("seeked", onSeeked);
+      resolve();
+    }, 3_000);
     const onSeeked = () => {
+      window.clearTimeout(timeout);
       video.removeEventListener("seeked", onSeeked);
       resolve();
     };

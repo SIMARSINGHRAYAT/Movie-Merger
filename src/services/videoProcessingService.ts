@@ -2,6 +2,7 @@ import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import type {
   Clip,
+  ClipMetadata,
   EngineCapabilities,
   MergeResult,
   OutputPreset,
@@ -21,6 +22,7 @@ const PRESET_DIMENSIONS: Record<Exclude<OutputPreset, "original">, { width: numb
 interface MergeCallbacks {
   onStage: (stage: string) => void;
   onProgress: (progress: number | null) => void;
+  onClipMetadata?: (clipId: string, metadata: ClipMetadata) => void;
 }
 
 const qualityToCrf = (quality: OutputSettings["quality"], format: OutputSettings["format"]): string => {
@@ -88,23 +90,83 @@ export class VideoProcessingService {
     if (this.loaded) return;
 
     if (!this.loadingPromise) {
-      this.loadingPromise = this.loadEngine(onStage);
+      this.loadingPromise = this.loadEngine(onStage).catch((error: unknown) => {
+        this.loadingPromise = null;
+        throw error;
+      });
     }
 
     await this.loadingPromise;
   }
 
+  private async probeVideoMetadata(file: File): Promise<ClipMetadata> {
+    const ffmpeg = this.ffmpeg;
+    if (!ffmpeg) {
+      throw new Error("Video engine is not available to inspect this file.");
+    }
+
+    const extension = getExtension(file.name) || "mp4";
+    const inputName = `probe_${crypto.randomUUID()}.${extension}`;
+    this.logBuffer = [];
+
+    try {
+      await ffmpeg.writeFile(inputName, await fetchFile(file));
+      try {
+        await ffmpeg.exec(["-i", inputName]);
+      } catch {
+        // FFmpeg exits non-zero for an input-only probe; stream details are in its log.
+      }
+    } finally {
+      await this.safeDelete(inputName);
+    }
+
+    const log = this.logBuffer.join("\n");
+    const durationMatch = log.match(/Duration:\s*(\d+):(\d+):([\d.]+)/i);
+    const videoStream = log.match(/Video:[^\n]*?(\d{2,5})x(\d{2,5})/i);
+    if (!durationMatch || !videoStream) {
+      throw new Error("The video stream could not be identified by the local video engine.");
+    }
+
+    const duration = Number(durationMatch[1]) * 3600 + Number(durationMatch[2]) * 60 + Number(durationMatch[3]);
+    const width = Number(videoStream[1]);
+    const height = Number(videoStream[2]);
+    if (!Number.isFinite(duration) || duration <= 0 || !width || !height) {
+      throw new Error("The video has invalid duration or resolution metadata.");
+    }
+
+    return { duration, width, height, thumbnailUrl: null };
+  }
+
   async mergeClips(
-    clips: Clip[],
+    inputClips: Clip[],
     settings: OutputSettings,
     callbacks: MergeCallbacks,
     signal?: AbortSignal
   ): Promise<MergeResult> {
-    if (!clips.length) {
+    if (!inputClips.length) {
       throw new Error("Please add at least one clip before merging.");
     }
 
     await this.ensureLoaded(callbacks.onStage);
+
+    const clips: Clip[] = [];
+    for (let index = 0; index < inputClips.length; index += 1) {
+      const clip = inputClips[index];
+      if (clip.metadataAvailable) {
+        clips.push(clip);
+        continue;
+      }
+
+      callbacks.onStage(`Inspecting clip ${index + 1} of ${inputClips.length}`);
+      const metadata = await this.probeVideoMetadata(clip.file);
+      callbacks.onClipMetadata?.(clip.id, metadata);
+      clips.push({
+        ...clip,
+        metadata,
+        metadataAvailable: true,
+        trimEnd: clip.trimEnd > 0 ? clip.trimEnd : metadata.duration,
+      });
+    }
 
     const ffmpeg = this.ffmpeg;
     if (!ffmpeg) {
@@ -371,28 +433,41 @@ export class VideoProcessingService {
   private async loadEngine(onStage?: (stage: string) => void): Promise<void> {
     onStage?.("Preparing video engine...");
 
-    const ffmpeg = new FFmpeg();
-    ffmpeg.on("log", ({ message }) => {
-      this.logBuffer.push(message);
-      if (this.logBuffer.length > 150) {
-        this.logBuffer.shift();
+    const baseURLs = [
+      `https://unpkg.com/@ffmpeg/core@${CORE_VERSION}/dist/esm`,
+      `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${CORE_VERSION}/dist/esm`,
+    ];
+    let lastError: unknown;
+
+    for (const baseURL of baseURLs) {
+      const ffmpeg = new FFmpeg();
+      ffmpeg.on("log", ({ message }) => {
+        this.logBuffer.push(message);
+        if (this.logBuffer.length > 150) {
+          this.logBuffer.shift();
+        }
+      });
+
+      ffmpeg.on("progress", ({ progress }) => {
+        const safeProgress = Number.isFinite(progress) ? Math.max(0, Math.min(progress, 1)) : 0;
+        this.progressHandler?.(safeProgress);
+      });
+
+      try {
+        const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript");
+        const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm");
+        await ffmpeg.load({ coreURL, wasmURL });
+        this.ffmpeg = ffmpeg;
+        this.loaded = true;
+        return;
+      } catch (error) {
+        lastError = error;
+        ffmpeg.terminate();
       }
-    });
+    }
 
-    ffmpeg.on("progress", ({ progress }) => {
-      const safeProgress = Number.isFinite(progress) ? Math.max(0, Math.min(progress, 1)) : 0;
-      this.progressHandler?.(safeProgress);
-    });
-
-    const baseURL = `https://unpkg.com/@ffmpeg/core@${CORE_VERSION}/dist/esm`;
-    const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript");
-    const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm");
-    const workerURL = await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, "text/javascript");
-
-    await ffmpeg.load({ coreURL, wasmURL, workerURL });
-
-    this.ffmpeg = ffmpeg;
-    this.loaded = true;
+    const detail = lastError instanceof Error ? lastError.message : "Unknown download error";
+    throw new Error(`Unable to download the video engine from available CDNs. Check your internet connection and retry. ${detail}`);
   }
 
   private async probeHasAudio(inputName: string): Promise<boolean> {

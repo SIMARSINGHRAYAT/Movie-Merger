@@ -1,4 +1,5 @@
 import type { EngineCapabilities, OutputSettings } from "@/types";
+import { sanitizeOutputFileName } from "@/utils/format";
 
 interface OutputSettingsPanelProps {
   settings: OutputSettings;
@@ -11,10 +12,20 @@ const inputClass = "w-full rounded-md border border-white/20 bg-slate-950/80 px-
 export const OutputSettingsPanel = ({ settings, capabilities, onChange }: OutputSettingsPanelProps) => {
   const videoCodec = capabilities.videoCodecs[settings.format]?.[0] ?? "auto";
   const audioCodec = capabilities.audioCodecs[settings.format]?.[0] ?? "auto";
+  const resolvedFileName = sanitizeOutputFileName(settings.filename, settings.format);
 
   return (
     <section className="rounded-xl border border-white/10 bg-slate-900/40 p-4 backdrop-blur-md">
-      <h2 className="mb-3 text-lg font-semibold text-white">Output Settings</h2>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold text-white">Output Settings</h2>
+        <button
+          type="button"
+          className="rounded-md border border-white/20 px-2.5 py-1 text-xs text-slate-200 transition hover:border-cyan-400/60"
+          onClick={() => onChange({ ...settings, filename: "Merged_Movie" })}
+        >
+          Reset name
+        </button>
+      </div>
       <div className="grid gap-3 md:grid-cols-2">
         <label className="space-y-1 text-xs text-slate-300">
           Output filename
@@ -121,6 +132,8 @@ export const OutputSettingsPanel = ({ settings, capabilities, onChange }: Output
         <p>Video codec: {videoCodec}</p>
         <p>Audio codec: {audioCodec}</p>
       </div>
+
+      <p className="mt-2 text-[11px] text-cyan-200/90">Final file: {resolvedFileName}</p>
 
       <p className="mt-3 text-xs text-slate-400">
         Your videos are processed locally in your browser whenever possible.
