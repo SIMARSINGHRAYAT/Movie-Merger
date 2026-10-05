@@ -24,6 +24,7 @@ export interface Clip {
   mimeType: string;
   metadata: ClipMetadata;
   metadataAvailable: boolean;
+  sourceSlot?: number;
   trimStart: number;
   trimEnd: number;
   muted: boolean;

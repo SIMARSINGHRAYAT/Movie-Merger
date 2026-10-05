@@ -27,9 +27,11 @@ const defaultSettings: OutputSettings = {
 
 const createClipId = () => `clip_${crypto.randomUUID()}`;
 
+const primaryButtonClass =
+  "rounded-full border border-white/20 bg-black/35 px-7 py-3.5 font-semibold text-transparent bg-clip-text bg-gradient-to-b from-white via-slate-200 to-slate-500 shadow-[0_0_32px_rgba(255,255,255,0.1)] transition hover:border-white/45 hover:shadow-[0_0_42px_rgba(96,165,250,0.2)] focus:outline-none focus:ring-2 focus:ring-cyan-300/70";
+
 export default function App() {
   const serviceRef = useRef(new VideoProcessingService());
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const clipsRef = useRef<Clip[]>([]);
   const outputUrlRef = useRef<string | null>(null);
@@ -51,9 +53,10 @@ export default function App() {
   });
   const [result, setResult] = useState<MergeResult | null>(null);
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
-  const [showHowItWorks, setShowHowItWorks] = useState(false);
   const [settingsStatus, setSettingsStatus] = useState<"saved" | "restored" | "idle">("idle");
   const [isHydratingSettings, setIsHydratingSettings] = useState(true);
+  const [page, setPage] = useState<"welcome" | "editor" | "render">("welcome");
+  const [slotCount, setSlotCount] = useState(2);
 
   const previewClip = clips.find((clip) => clip.id === previewClipId) ?? null;
   const trimClip = clips.find((clip) => clip.id === trimClipId) ?? null;
@@ -74,7 +77,7 @@ export default function App() {
 
     try {
       const parsed = JSON.parse(saved) as Partial<OutputSettings>;
-      setSettings((current) => ({ ...current, ...parsed }));
+      setSettings((current) => ({ ...current, ...parsed, format: "mp4" }));
       setSettingsStatus("restored");
     } catch {
       setSettingsStatus("idle");
@@ -119,7 +122,7 @@ export default function App() {
     };
   }, []);
 
-  const addFiles = async (incoming: FileList | File[]) => {
+  const addFiles = async (incoming: FileList | File[], insertAt?: number) => {
     const files = Array.from(incoming);
     if (!files.length) return;
 
@@ -169,6 +172,7 @@ export default function App() {
           mimeType: file.type,
           metadata,
           metadataAvailable,
+          sourceSlot: insertAt,
           trimStart: 0,
           trimEnd: metadata.duration || 0,
           muted: false,
@@ -186,7 +190,12 @@ export default function App() {
     }
 
     if (accepted.length) {
-      setClips((current) => [...current, ...accepted]);
+      setClips((current) => {
+        const next = [...current];
+        const insertionIndex = insertAt === undefined ? next.length : Math.min(insertAt, next.length);
+        next.splice(insertionIndex, 0, ...accepted);
+        return next;
+      });
     }
 
     if (errors.length) {
@@ -221,6 +230,7 @@ export default function App() {
       id: createClipId(),
       sourceUrl: URL.createObjectURL(clip.file),
       name: `${clip.name.replace(/(\.[^.]+)?$/, "")}_copy.${clip.name.split(".").pop() || "mp4"}`,
+      sourceSlot: undefined,
     };
 
     const index = clips.findIndex((item) => item.id === clipId);
@@ -252,10 +262,12 @@ export default function App() {
       URL.revokeObjectURL(outputUrl);
       setOutputUrl(null);
     }
+    setSlotCount(2);
+    setPage("editor");
   };
 
   const startMerge = async () => {
-    if (!clips.length) return;
+    if (clips.length < 2) return;
 
     setErrorMessage(null);
     setResult(null);
@@ -275,6 +287,7 @@ export default function App() {
       elapsedMs: 0,
       canCancel: true,
     });
+    setPage("render");
 
     const timer = window.setInterval(() => {
       setProcessing((current) => ({ ...current, elapsedMs: Date.now() - startedAt }));
@@ -283,7 +296,7 @@ export default function App() {
     try {
       const mergeResult = await serviceRef.current.mergeClips(
         clips,
-        settings,
+        { ...settings, format: "mp4" },
         {
           onStage: (stage) => setProcessing((current) => ({ ...current, stage })),
           onProgress: (progress) => setProcessing((current) => ({ ...current, progress })),
@@ -334,188 +347,251 @@ export default function App() {
     setSettingsStatus("saved");
   };
 
+  const renderHeader = (
+    <header className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between px-5 py-5 sm:px-8 lg:px-12">
+      <button type="button" onClick={() => setPage("welcome")} className="brand-mark text-sm font-semibold tracking-[0.22em] text-white">
+        MM <span className="ml-2 text-xs font-normal tracking-[0.08em] text-white/50">MOVIE MERGE</span>
+      </button>
+      <span className="hidden text-xs tracking-[0.2em] text-white/45 sm:block">PRIVATE · IN-BROWSER · LOCAL</span>
+    </header>
+  );
+
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_20%_0%,rgba(56,189,248,0.16),transparent_45%),radial-gradient(circle_at_80%_15%,rgba(168,85,247,0.16),transparent_48%),#020617] text-slate-100">
-      <main className="mx-auto w-full max-w-7xl px-4 pb-10 pt-8 sm:px-6 lg:px-10">
-        <header className="mb-8 text-center">
-          <h1 className="text-5xl font-semibold tracking-tight text-white md:text-6xl">Movie Merge</h1>
-          <p className="mt-3 text-base text-slate-300 md:text-lg">Turn multiple clips into one seamless movie.</p>
-        </header>
+    <div className="app-canvas min-h-screen overflow-hidden text-slate-100">
+      {page === "welcome" ? (
+        <main className="welcome-scene relative flex min-h-screen items-center justify-center px-5 py-24 text-center">
+          {renderHeader}
+          <div className="hero-orbit hero-orbit-one" />
+          <div className="hero-orbit hero-orbit-two" />
+          <section className="relative z-[1] mx-auto max-w-5xl animate-[fadeIn_700ms_ease-out]">
+            <h1 className="chrome-title text-7xl font-semibold leading-[0.9] tracking-[-0.075em] sm:text-8xl md:text-[9.5rem] lg:text-[11rem]">
+              Movie
+              <br />
+              Merge
+            </h1>
+            <p className="mx-auto mt-8 max-w-xl text-lg italic leading-relaxed text-slate-300/75 sm:text-xl">
+              Bring your video clips together, arrange every moment, and create one seamless movie.
+            </p>
+            <button type="button" onClick={() => setPage("editor")} className={`${primaryButtonClass} mt-10 text-base`}>
+              Get started <span className="ml-2 text-white/70">↗</span>
+            </button>
+            <p className="mt-7 text-[10px] uppercase tracking-[0.28em] text-white/35">
+              No uploads to a server · Your media stays yours
+            </p>
+          </section>
+          <div className="absolute bottom-8 left-0 right-0 flex justify-center gap-2" aria-hidden="true">
+            {["#40e0d0", "#648cff", "#c084fc", "#f472b6", "#fb7185", "#fb923c", "#a3e635"].map((color) => (
+              <span key={color} className="h-1 w-7 rounded-full opacity-80" style={{ backgroundColor: color, boxShadow: `0 0 14px ${color}` }} />
+            ))}
+          </div>
+        </main>
+      ) : (
+        <main className="relative mx-auto min-h-screen w-full max-w-7xl px-4 pb-14 pt-24 sm:px-6 lg:px-10">
+          {renderHeader}
+          {page === "editor" ? (
+            <div className="animate-[fadeIn_350ms_ease-out] space-y-9">
+              <section className="max-w-3xl">
+                <p className="mb-3 text-xs uppercase tracking-[0.3em] text-cyan-200/65">The editing room</p>
+                <h1 className="text-4xl font-medium tracking-tight text-white sm:text-5xl">Build your sequence.</h1>
+                <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-400 sm:text-base">
+                  Add clips one by one, arrange the order, and preview each moment before you bring them together.
+                </p>
+              </section>
 
-        {errorMessage && (
-          <div className="mb-5 rounded-lg border border-red-400/40 bg-red-500/10 p-3 text-sm text-red-100" role="alert">
-            {errorMessage}
-          </div>
-        )}
-        {importNotice && (
-          <div className="mb-5 rounded-lg border border-cyan-400/30 bg-cyan-500/10 p-3 text-sm text-cyan-100" role="status">
-            {importNotice}
-          </div>
-        )}
-
-        {clips.length === 0 ? (
-          <div className="animate-[fadeIn_220ms_ease-out] space-y-6">
-              <VideoUploader onFilesSelected={addFiles} isImporting={isImporting} />
-              <p className="text-center text-xs text-slate-400">
-                Add as many clips as your device can reasonably handle and combine them into one seamless movie directly
-                from your browser.
-              </p>
-          </div>
-        ) : (
-          <div className="animate-[fadeIn_220ms_ease-out] space-y-4">
-              <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-slate-900/35 p-4">
-                <div className="text-sm text-slate-200">
-                  <p>
-                    {clips.length} clips |{" "}
-                    {clips.some((clip) => !clip.metadataAvailable)
-                      ? "duration pending"
-                      : `${formatDuration(totalTrimmedDuration)} total`}{" "}
-                    | {formatBytes(totalSourceSize)}
-                  </p>
-                  {isLargeProject && (
-                    <p className="mt-1 text-xs text-amber-300">
-                      Large project detected. Browser processing may need significant RAM and time.
-                    </p>
-                  )}
-                  {settingsStatus !== "idle" && (
-                    <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-cyan-300/80">
-                      {settingsStatus === "saved" ? "settings saved" : "settings restored"}
-                    </p>
-                  )}
+              {errorMessage && (
+                <div className="rounded-xl border border-red-400/35 bg-red-500/10 p-4 text-sm text-red-100" role="alert">
+                  {errorMessage}
                 </div>
+              )}
+              {importNotice && (
+                <div className="rounded-xl border border-cyan-400/25 bg-cyan-500/10 p-4 text-sm text-cyan-100" role="status">
+                  {importNotice}
+                </div>
+              )}
 
-                <div className="flex flex-wrap gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="video/*,.mp4,.mov,.webm,.avi,.mkv,.m4v,.mpeg,.mpg"
-                    multiple
-                    className="hidden"
-                    onChange={(event) => {
-                      if (event.target.files) {
-                        void addFiles(event.target.files);
-                      }
-                      event.target.value = "";
-                    }}
-                  />
+              <section className="space-y-4">
+                <div className="flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-medium text-white">Add your videos</h2>
+                    <p className="mt-1 text-xs text-slate-500">Choose a first clip, then a second. Add more whenever you need.</p>
+                  </div>
+                  <span className="text-xs text-slate-500">{clips.length} {clips.length === 1 ? "clip" : "clips"} selected</span>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {Array.from(
+                    { length: Math.max(slotCount, ...clips.map((clip) => (clip.sourceSlot ?? -1) + 1)) },
+                    (_, index) => {
+                    const clip = clips.find((item) => item.sourceSlot === index);
+                    return (
+                      <section
+                        key={`slot-${index}`}
+                        className="glass-panel group relative min-h-[248px] overflow-hidden rounded-2xl p-4 transition duration-300 hover:-translate-y-0.5 hover:border-white/25"
+                      >
+                        <div className="mb-5 flex items-center justify-between">
+                          <span className="text-xs uppercase tracking-[0.2em] text-white/50">
+                            {index < 2 ? `Video 0${index + 1}` : `Additional ${String(index - 1).padStart(2, "0")}`}
+                          </span>
+                          <span className={`h-1.5 w-1.5 rounded-full ${clip ? "bg-emerald-300 shadow-[0_0_10px_rgba(110,231,183,0.8)]" : "bg-white/20"}`} />
+                        </div>
+                        {clip ? (
+                          <div className="flex h-[175px] flex-col">
+                            <div className="relative mb-3 h-24 overflow-hidden rounded-xl border border-white/10 bg-black/40">
+                              {clip.metadata.thumbnailUrl ? (
+                                <img src={clip.metadata.thumbnailUrl} alt={`Preview of ${clip.name}`} className="h-full w-full object-cover opacity-75 transition group-hover:opacity-100" />
+                              ) : (
+                                <div className="flex h-full items-center justify-center text-2xl text-white/20">▶</div>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setPreviewClipId(clip.id)}
+                                disabled={!clip.metadataAvailable}
+                                className="absolute inset-0 flex items-center justify-center text-2xl text-white opacity-0 transition hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-0"
+                                aria-label={`Preview ${clip.name}`}
+                              >
+                                <span className="rounded-full border border-white/30 bg-black/55 px-4 py-2 backdrop-blur">▶</span>
+                              </button>
+                            </div>
+                            <p className="truncate text-sm font-medium text-white" title={clip.name}>{clip.name}</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {clip.metadataAvailable ? formatDuration(clip.metadata.duration) : "Metadata on export"} · {formatBytes(clip.size)}
+                            </p>
+                            <button type="button" onClick={() => removeClip(clip.id)} className="mt-auto self-start text-xs text-white/45 transition hover:text-rose-300">
+                              Remove clip
+                            </button>
+                          </div>
+                        ) : (
+                          <VideoUploader
+                            compact
+                            multiple={false}
+                            isImporting={isImporting}
+                            onFilesSelected={(files) => void addFiles(files, index)}
+                            title={index < 2 ? `Drop video ${index + 1} here` : "Drop another video"}
+                            description="or click to browse"
+                            actionLabel="Choose video"
+                          />
+                        )}
+                      </section>
+                    );
+                  })}
                   <button
                     type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="rounded-lg border border-cyan-400/40 px-4 py-2 text-sm text-cyan-200"
+                    onClick={() => setSlotCount((current) => current + 1)}
+                    className="glass-panel flex min-h-[248px] flex-col items-center justify-center rounded-2xl border-dashed text-white/40 transition hover:border-cyan-200/35 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-45"
+                    aria-label="Add another video slot"
                   >
-                    Add More Videos
-                  </button>
-                  <button
-                    type="button"
-                    onClick={clearAll}
-                    className="rounded-lg border border-white/20 px-4 py-2 text-sm text-slate-200"
-                  >
-                    Clear All
+                    <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-white/[0.03] text-3xl font-light">+</span>
+                    <span className="text-sm">Add another clip</span>
                   </button>
                 </div>
               </section>
 
-              <SortableTimeline
-                clips={clips}
-                setClips={setClips}
-                onPreview={setPreviewClipId}
-                onTrim={setTrimClipId}
-                onToggleMute={(clipId) => updateClip(clipId, (clip) => ({ ...clip, muted: !clip.muted }))}
-                onDuplicate={duplicateClip}
-                onRemove={removeClip}
-                onTransitionChange={(clipId, transition) =>
-                  updateClip(clipId, (clip) => ({ ...clip, transitionToNext: transition }))
-                }
-                onMoveLeft={(clipId) => moveClip(clipId, -1)}
-                onMoveRight={(clipId) => moveClip(clipId, 1)}
-              />
+              {clips.length > 0 && (
+                <>
+                  <section className="flex flex-wrap items-center justify-between gap-4 border-y border-white/[0.08] py-4">
+                    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-400">
+                      <span>{clips.length} separate clips</span>
+                      <span>{clips.some((clip) => !clip.metadataAvailable) ? "Total duration pending" : `${formatDuration(totalTrimmedDuration)} total`}</span>
+                      <span>{formatBytes(totalSourceSize)} source media</span>
+                      {isLargeProject && <span className="text-amber-300">Large project · export may take a while</span>}
+                    </div>
+                    <button type="button" onClick={clearAll} className="text-xs text-white/45 transition hover:text-rose-300">Clear sequence</button>
+                  </section>
 
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsSequencePreviewOpen(true)}
-                  disabled={clips.some((clip) => !clip.metadataAvailable)}
-                  className="rounded-lg border border-white/20 px-4 py-2 text-sm"
-                >
-                  Preview Movie
-                </button>
-                <button
-                  type="button"
-                  onClick={saveProjectSettings}
-                  className="rounded-lg border border-white/20 px-4 py-2 text-sm"
-                >
-                  Save Project Settings
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowHowItWorks((current) => !current)}
-                  className="rounded-lg border border-white/20 px-4 py-2 text-sm"
-                >
-                  {showHowItWorks ? "Hide How It Works" : "How It Works"}
-                </button>
-              </div>
+                  <SortableTimeline
+                    clips={clips}
+                    setClips={setClips}
+                    onPreview={setPreviewClipId}
+                    onTrim={setTrimClipId}
+                    onToggleMute={(clipId) => updateClip(clipId, (clip) => ({ ...clip, muted: !clip.muted }))}
+                    onDuplicate={duplicateClip}
+                    onRemove={removeClip}
+                    onTransitionChange={(clipId, transition) =>
+                      updateClip(clipId, (clip) => ({ ...clip, transitionToNext: transition }))
+                    }
+                    onMoveLeft={(clipId) => moveClip(clipId, -1)}
+                    onMoveRight={(clipId) => moveClip(clipId, 1)}
+                  />
 
-              {showHowItWorks && (
-                <section className="rounded-xl border border-white/10 bg-slate-900/30 p-4 text-sm text-slate-300">
-                  <h2 className="mb-2 text-base font-semibold text-white">How It Works</h2>
-                  <p>1. Add your clips.</p>
-                  <p>2. Arrange their order.</p>
-                  <p>3. Choose your output settings.</p>
-                  <p>4. Merge and download your movie.</p>
-                </section>
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsSequencePreviewOpen(true)}
+                        disabled={clips.some((clip) => !clip.metadataAvailable)}
+                        className="rounded-full border border-white/15 bg-white/[0.03] px-5 py-2.5 text-sm text-slate-300 transition hover:border-white/30 hover:text-white disabled:opacity-40"
+                      >
+                        Preview sequence
+                      </button>
+                      <button
+                        type="button"
+                        onClick={saveProjectSettings}
+                        className="rounded-full border border-white/15 bg-white/[0.03] px-5 py-2.5 text-sm text-slate-300 transition hover:border-white/30 hover:text-white"
+                      >
+                        Save export settings
+                      </button>
+                      {settingsStatus !== "idle" && <span className="self-center text-[10px] uppercase tracking-widest text-emerald-200/60">{settingsStatus}</span>}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={startMerge}
+                      disabled={clips.length < 2 || isImporting}
+                      className={`${primaryButtonClass} text-sm disabled:cursor-not-allowed disabled:opacity-35`}
+                    >
+                      Merge clips <span className="ml-2">→</span>
+                    </button>
+                  </div>
+                  {clips.length < 2 && <p className="text-right text-xs text-slate-500">Add at least two clips to start your merge.</p>}
+
+                  <details className="glass-panel rounded-2xl p-5">
+                    <summary className="cursor-pointer text-sm text-slate-300">Export settings · MP4</summary>
+                    <div className="mt-5">
+                      <OutputSettingsPanel
+                        settings={{ ...settings, format: "mp4" }}
+                        capabilities={{ ...serviceRef.current.capabilities, formats: ["mp4"] }}
+                        onChange={(next) => setSettings({ ...next, format: "mp4" })}
+                      />
+                    </div>
+                  </details>
+                </>
               )}
-
-              <OutputSettingsPanel
-                settings={settings}
-                capabilities={serviceRef.current.capabilities}
-                onChange={setSettings}
-              />
-
-              {processing.active ? (
-                <ProcessingPanel state={processing} onCancel={cancelMerge} />
-              ) : result && outputUrl ? (
+              {isImporting && <p className="text-center text-sm text-slate-400" aria-live="polite">Reading video details…</p>}
+              <footer className="pt-4 text-center text-xs text-slate-600">Your videos stay on your device. MP4 and WebM inputs are supported.</footer>
+            </div>
+          ) : (
+            <div className="mx-auto max-w-4xl animate-[fadeIn_350ms_ease-out] space-y-7 pt-8">
+              <div className="text-center">
+                <p className="mb-3 text-xs uppercase tracking-[0.3em] text-cyan-100/60">Render studio</p>
+                <h1 className="text-4xl font-medium tracking-tight text-white sm:text-5xl">
+                  {processing.active ? "Bringing it together." : result ? "Your film is ready." : "Render paused."}
+                </h1>
+                <p className="mt-3 text-sm text-slate-400">
+                  {processing.active ? "Your clips are being processed locally in this browser." : "Preview your finished MP4 before downloading."}
+                </p>
+              </div>
+              {errorMessage && (
+                <div className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-100" role="alert">
+                  {errorMessage}
+                </div>
+              )}
+              {processing.active && <ProcessingPanel state={processing} onCancel={cancelMerge} />}
+              {!processing.active && result && outputUrl && (
                 <ResultPreview
                   result={result}
                   outputUrl={outputUrl}
-                  onBackToEditor={() => setResult(null)}
+                  onBackToEditor={() => setPage("editor")}
                   onResetProject={clearAll}
                 />
-              ) : (
-                <section className="rounded-xl border border-white/10 bg-slate-900/35 p-4">
-                  {clips.length === 1 && (
-                    <p className="mb-3 text-sm text-slate-300">
-                      One clip is loaded. You can still export it, but merging works best with two or more clips.
-                    </p>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={startMerge}
-                    disabled={clips.length === 0 || isImporting}
-                    className="w-full rounded-xl bg-gradient-to-r from-cyan-500 via-blue-500 to-violet-500 px-5 py-3 text-lg font-semibold text-white shadow-lg shadow-blue-950/50 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Merge Videos
-                  </button>
-                </section>
               )}
-          </div>
-        )}
-
-        {isImporting && (
-          <p className="mt-4 text-sm text-slate-300" aria-live="polite">
-            Reading video metadata and generating thumbnails...
-          </p>
-        )}
-      </main>
-
-      <footer className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-center gap-4 border-t border-white/10 px-4 py-5 text-xs text-slate-400 sm:px-6 lg:px-10">
-        <button type="button" className="hover:text-slate-200" onClick={() => setShowHowItWorks((current) => !current)}>
-          How It Works
-        </button>
-        <span>Privacy: Files stay on your device during local processing whenever possible.</span>
-        <span>Supported Formats: MP4, MOV, WebM, AVI, MKV, M4V, MPEG</span>
-        <span>About: Browser-first movie assembly utility.</span>
-      </footer>
+              {!processing.active && !result && (
+                <div className="flex justify-center gap-3">
+                  <button type="button" onClick={() => setPage("editor")} className="rounded-full border border-white/20 px-5 py-2.5 text-sm text-slate-200">Back to sequence</button>
+                  {errorMessage && <button type="button" onClick={() => void startMerge()} className={primaryButtonClass}>Try again</button>}
+                </div>
+              )}
+            </div>
+          )}
+        </main>
+      )}
 
       <ClipPreviewModal clip={previewClip} onClose={() => setPreviewClipId(null)} />
       <TrimEditor

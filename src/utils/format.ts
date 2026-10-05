@@ -20,9 +20,8 @@ export const sanitizeOutputFileName = (value: string, extension: string): string
     .replace(/[\\/:*?"<>|]+/g, "_")
     .replace(/\s+/g, " ")
     .trim()
-    .replace(/\.+$/g, "");
+    .replace(/\.+$/g, "")
+    .replace(/\.(mp4|webm)$/i, "");
   const safeBase = base.length > 0 ? base : "Merged_Movie";
-  return safeBase.toLowerCase().endsWith(`.${extension}`)
-    ? safeBase
-    : `${safeBase}.${extension}`;
+  return `${safeBase}.${extension}`;
 };

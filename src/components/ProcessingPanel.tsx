@@ -1,4 +1,5 @@
 import type { ProcessingState } from "@/types";
+import { formatDuration } from "@/utils/format";
 
 interface ProcessingPanelProps {
   state: ProcessingState;
@@ -7,6 +8,10 @@ interface ProcessingPanelProps {
 
 export const ProcessingPanel = ({ state, onCancel }: ProcessingPanelProps) => {
   const progressValue = state.progress ?? 0;
+  const remainingSeconds =
+    state.progress !== null && state.progress > 0
+      ? Math.max(0, Math.ceil((state.elapsedMs / 1000 / state.progress) * (1 - state.progress)))
+      : null;
 
   return (
     <section className="rounded-xl border border-cyan-400/30 bg-slate-900/50 p-5 backdrop-blur-md" aria-live="polite">
@@ -24,8 +29,13 @@ export const ProcessingPanel = ({ state, onCancel }: ProcessingPanelProps) => {
 
       <div className="mt-3 flex items-center justify-between text-xs text-slate-400">
         <span>{state.progress === null ? "Calculating progress..." : `${Math.round(state.progress * 100)}% complete`}</span>
-        <span>{Math.floor(state.elapsedMs / 1000)}s elapsed</span>
+        <span>{formatDuration(state.elapsedMs / 1000)} elapsed</span>
       </div>
+      <p className="mt-2 text-xs text-slate-500" aria-live="polite">
+        {remainingSeconds === null
+          ? "Estimating remaining time…"
+          : `About ${formatDuration(remainingSeconds)} remaining`}
+      </p>
 
       <button
         type="button"

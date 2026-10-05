@@ -4,11 +4,23 @@ interface VideoUploaderProps {
   onFilesSelected: (files: FileList | File[]) => void;
   compact?: boolean;
   isImporting?: boolean;
+  multiple?: boolean;
+  title?: string;
+  description?: string;
+  actionLabel?: string;
 }
 
 const ACCEPTED_FORMATS = "video/mp4,video/quicktime,video/webm,video/x-msvideo,video/x-matroska,video/mpeg,.mp4,.mov,.webm,.avi,.mkv,.m4v,.mpeg,.mpg";
 
-export const VideoUploader = ({ onFilesSelected, compact = false, isImporting = false }: VideoUploaderProps) => {
+export const VideoUploader = ({
+  onFilesSelected,
+  compact = false,
+  isImporting = false,
+  multiple = true,
+  title = "Drop your videos here",
+  description = "or click to browse",
+  actionLabel = "Add Videos",
+}: VideoUploaderProps) => {
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -23,7 +35,7 @@ export const VideoUploader = ({ onFilesSelected, compact = false, isImporting = 
         ref={inputRef}
         type="file"
         accept={ACCEPTED_FORMATS}
-        multiple
+        multiple={multiple}
         disabled={isImporting}
         className="hidden"
         onChange={(event) => {
@@ -67,10 +79,10 @@ export const VideoUploader = ({ onFilesSelected, compact = false, isImporting = 
         }`}
       >
         <h2 className="text-2xl font-semibold text-white">
-          {isImporting ? "Reading your videos..." : "Drop your videos here"}
+          {isImporting ? "Reading your videos..." : title}
         </h2>
         <p className="text-sm text-slate-300">
-          {isImporting ? "This can take a moment for large files." : "or click to browse"}
+          {isImporting ? "This can take a moment for large files." : description}
         </p>
         <p className="max-w-2xl text-xs text-slate-400">
           Supported formats: MP4, MOV, WebM, AVI, MKV, M4V, MPEG and compatible browser codecs.
@@ -81,7 +93,7 @@ export const VideoUploader = ({ onFilesSelected, compact = false, isImporting = 
           disabled={isImporting}
           className="mt-2 rounded-lg bg-gradient-to-r from-cyan-500 via-blue-500 to-violet-500 px-6 py-3 font-medium text-white shadow-lg shadow-cyan-900/30 transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
         >
-          {isImporting ? "Importing..." : "Add Videos"}
+          {isImporting ? "Importing..." : actionLabel}
         </button>
       </div>
     </section>
